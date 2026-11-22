@@ -4,21 +4,36 @@ const I=process.env.MAKEFUN_INPUT_DIR??'/input',O=process.env.MAKEFUN_OUTPUT_DIR
 function run(p,g){
  const n=p.length,D=new Int32Array(256),C=new Int32Array(64),M=new Int32Array(256),o=new Uint8Array(65536);
  let s=0,c=0,l=0,q=0,pc=0,t=0;
+ // Pre-decode once per program: for every byte position, its opcode (255 = invalid),
+ // decoded immediate, and next pc (-1 = immediate cut off by the program's end).
+ // The hot loop then never re-reads immediates or re-checks opcode validity per step.
+ // Every position is decoded, not just instruction starts, so a jump landing
+ // mid-immediate behaves exactly as decoding on the fly would.
+ const op=new Uint8Array(n),ar=new Int32Array(n),nx=new Int32Array(n);
+ for(let i=0;i<n;i++){
+  const b=p[i],ok=b<8||b>=0x10&&b<=0x1e||b>=0x20&&b<=0x22||b>=0x30&&b<=0x34||b===0x40||b===0x41||b>=0x50&&b<=0x53;
+  if(!ok){op[i]=255;continue;}
+  const im=b===1?1:b===2?4:b>=0x30&&b<=0x33?2:0;
+  op[i]=b;
+  if(i+im>=n){nx[i]=-1;continue;}
+  nx[i]=i+1+im;
+  ar[i]=b===1?(p[i+1]<<24)>>24:b===2?p[i+1]|p[i+2]<<8|p[i+3]<<16|p[i+4]<<24:b>=0x30&&b<=0x33?p[i+1]|p[i+2]<<8:0;
+ }
  const end=e=>[o.subarray(0,l),e];
  for(;;){
   if(t===1e6)return end(10);
   if(pc<0||pc>=n)return end(9);
-  const op=p[pc],ok=op<8||op>=0x10&&op<=0x1e||op>=0x20&&op<=0x22||op>=0x30&&op<=0x34||op===0x40||op===0x41||op>=0x50&&op<=0x53;
-  if(!ok)return end(5);
-  const im=op===1?1:op===2?4:op>=0x30&&op<=0x33?2:0;
-  if(pc+im>=n)return end(9);
+  const k=op[pc];
+  if(k===255)return end(5);
+  const nn=nx[pc];
+  if(nn<0)return end(9);
   t++;
-  const nx=pc+1+im;
-  pc=nx;
-  switch(op){
+  const a=ar[pc];
+  pc=nn;
+  switch(k){
    case 0x00:return end(0);
-   case 0x01:if(s===256)return end(3);D[s++]=(p[nx-1]<<24)>>24;break;
-   case 0x02:if(s===256)return end(3);D[s++]=p[nx-4]|p[nx-3]<<8|p[nx-2]<<16|p[nx-1]<<24;break;
+   case 0x01:if(s===256)return end(3);D[s++]=a;break;
+   case 0x02:if(s===256)return end(3);D[s++]=a;break;
    case 0x03:if(s<1)return end(2);s--;break;
    case 0x04:if(s<1)return end(2);if(s===256)return end(3);D[s]=D[s-1];s++;break;
    case 0x05:if(s<2)return end(2);{const x=D[s-1];D[s-1]=D[s-2];D[s-2]=x;}break;
@@ -28,34 +43,34 @@ function run(p,g){
     if(s<2)return end(2);
     const b=D[s-1],a=D[s-2];
     let r;
-    if(op===0x10)r=(a+b)|0;
-    else if(op===0x11)r=(a-b)|0;
-    else if(op===0x12)r=Math.imul(a,b);
-    else if(op===0x13){if(!b)return end(4);r=(a/b)|0;}
-    else if(op===0x14){if(!b)return end(4);r=a%b|0;}
-    else if(op===0x15){if(!b)return end(4);r=(a>>>0)/(b>>>0)|0;}
-    else if(op===0x16){if(!b)return end(4);r=(a>>>0)%(b>>>0)|0;}
-    else if(op===0x18)r=a&b;
-    else if(op===0x19)r=a|b;
-    else if(op===0x1a)r=a^b;
-    else if(op===0x1c)r=a<<(b&31);
-    else if(op===0x1d)r=a>>(b&31);
-    else if(op===0x1e)r=a>>>(b&31)|0;
-    else if(op===0x20)r=a===b?1:0;
-    else if(op===0x21)r=a<b?1:0;
+    if(k===0x10)r=(a+b)|0;
+    else if(k===0x11)r=(a-b)|0;
+    else if(k===0x12)r=Math.imul(a,b);
+    else if(k===0x13){if(!b)return end(4);r=(a/b)|0;}
+    else if(k===0x14){if(!b)return end(4);r=a%b|0;}
+    else if(k===0x15){if(!b)return end(4);r=(a>>>0)/(b>>>0)|0;}
+    else if(k===0x16){if(!b)return end(4);r=(a>>>0)%(b>>>0)|0;}
+    else if(k===0x18)r=a&b;
+    else if(k===0x19)r=a|b;
+    else if(k===0x1a)r=a^b;
+    else if(k===0x1c)r=a<<(b&31);
+    else if(k===0x1d)r=a>>(b&31);
+    else if(k===0x1e)r=a>>>(b&31)|0;
+    else if(k===0x20)r=a===b?1:0;
+    else if(k===0x21)r=a<b?1:0;
     else r=(a>>>0)<(b>>>0)?1:0;
     s-=2;D[s++]=r;
     break;}
    case 0x17:if(s<1)return end(2);D[s-1]=-D[s-1]|0;break;
    case 0x1b:if(s<1)return end(2);D[s-1]=~D[s-1];break;
    case 0x30:case 0x31:case 0x32:{
-    const rel=(p[nx-2]|p[nx-1]<<8)<<16>>16;
-    if(op===0x30){pc=nx+rel;break;}
+    const rel=(a<<16)>>16;
+    if(k===0x30){pc=nn+rel;break;}
     if(s<1)return end(2);
     const v=D[--s];
-    if((op===0x31)===(v===0))pc=nx+rel;
+    if((k===0x31)===(v===0))pc=nn+rel;
     break;}
-   case 0x33:if(c===64)return end(7);C[c++]=nx;pc=p[nx-2]|p[nx-1]<<8;break;
+   case 0x33:if(c===64)return end(7);C[c++]=nn;pc=a;break;
    case 0x34:if(!c)return end(8);pc=C[--c];break;
    case 0x40:if(s<1)return end(2);{const a=D[s-1];if(a<0||a>255)return end(6);D[s-1]=M[a];}break;
    case 0x41:if(s<2)return end(2);{const a=D[s-1];if(a<0||a>255)return end(6);M[a]=D[s-2];s-=2;}break;
